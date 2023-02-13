@@ -5,12 +5,14 @@ param($Request, $TriggerMetadata)
 
 Write-Host "Processing Webhook for Alert $($Request.Body.alertUID)"
 
+Write-Host ($Request.Body | Format-Table | Out-String)
+
 $HaloClientID = $env:HaloClientID
 $HaloClientSecret = $env:HaloClientSecret
 $HaloURL = $env:HaloURL
 
 $HaloTicketStatusID = $env:HaloTicketStatusID
-$HaloTicketCloseStatusID = $env:HaloTicketCloseStatusID
+$HaloTicketCloseStatusID = $env:HaloTicketClosedStatusID
 $HaloCustomAlertTypeField = $env:HaloCustomAlertTypeField
 $HaloTicketType = $env:HaloTicketType
 $HaloReocurringStatus = $env:HaloReocurringStatus
@@ -36,9 +38,11 @@ $PriorityHaloMap = @{
     "Information" = "4"
 }
 
-$AlertWebhook = $Request.Body | convertfrom-json -depth 100
+$AlertWebhook = $Request.Body
+Write-Host $AlertWebhook.docURL
 
-if ($AlertWebhook.docURL && $AlertWebhook.alertMessage && $AlertWebhook.platform) {
+if ($AlertWebhook.docURL -and $AlertWebhook.alertMessage -and $AlertWebhook.platform) {
+    Write-Host "alert raised payload is Triggered"
     # alert raised payload
     $Email = Get-AlertEmailBody -AlertWebhook $AlertWebhook
 
@@ -153,9 +157,10 @@ if ($AlertWebhook.docURL && $AlertWebhook.alertMessage && $AlertWebhook.platform
 
         } 
 
+        Write-Host ($HaloTicketCreate | Format-Table | Out-String)
 
         $Ticket = New-HaloTicket -Ticket $HaloTicketCreate
-
+        Write-Host ($Ticket | Format-Table | Out-String)
         $ActionUpdate = @{
             id                = 1
             ticket_id         = $Ticket.id
@@ -180,10 +185,11 @@ if ($AlertWebhook.docURL && $AlertWebhook.alertMessage && $AlertWebhook.platform
         Write-Host "No alert found"
     }
 } else {
+    Write-Host "Resolved alert is Triggered"
     # alert resolved payload
     $Summary = Get-AlertSummary -AlertWebhook $AlertWebhook
     if ($Summary) {
-        
+        Write-Host ($Summary | Format-Table | Out-String)
         $Alert = $Summary.Alert
         $Device = $Summary.Device
         Connect-HaloAPI -URL $HaloURL -ClientId $HaloClientID -ClientSecret $HaloClientSecret -Scopes "all"
@@ -191,15 +197,16 @@ if ($AlertWebhook.docURL && $AlertWebhook.alertMessage && $AlertWebhook.platform
         $HaloPriority = $PriorityHaloMap."$($Alert.Priority)"
         [int32[]]$Priorities = @([int32]$HaloPriority)
         
+        Write-Host $Summary.Subject
         # search tickets by summary and status id
-        $Tickets = Get-HaloTicket  -SearchSummary $Summary.Subject -StatusID $HaloTicketStatusID -Priority $Priorities
-
+        $Tickets = Get-HaloTicket  -SearchSummary $Summary.Subject -Priority $Priorities
+        
         # get correct ticket id 
         $TicketID = $Null
         Foreach ($Ticket in $Tickets)
         {
             ## TO DO CHECK, we should check gfialerttype with alertID
-            if ($Ticket.tickettype_id -eq $HaloTicketType && $Ticket.inventory_number -eq $Device.hostname) {
+            if ($Ticket.tickettype_id -eq $HaloTicketType -and $Ticket.inventory_number -eq $Device.hostname -and ($Ticket.status_id -eq $HaloTicketStatusID -or $Ticket.status_id -eq 2)) {
                 # get one Ticket Detail info 
                 $OneTicket = Get-HaloTicket -TicketID $Ticket.id
                 if ($OneTicket.gfialerttype -eq $AlertWebhook.alertUID) {
@@ -207,13 +214,13 @@ if ($AlertWebhook.docURL && $AlertWebhook.alertMessage && $AlertWebhook.platform
                 }
             }
         }
-
+        Write-Host $TicketID
         if ($TicketID) {
             $TicketUpdate = @{
                 id        = $TicketID
                 status_id = $HaloTicketCloseStatusID   
             }
-            
+            Write-Host ($TicketUpdate | Format-Table | Out-String)
             $null = Set-HaloTicket -Ticket $TicketUpdate
         } else {
             Write-Host "No opened alert with alertID found"
